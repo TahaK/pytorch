@@ -530,7 +530,7 @@ static void check_args(
 
 static void check_input_size(THVoidTensor* input, THVoidTensor* weight, int groups)
 {
-  if (input->nDimension > 5){
+  if (input->nDimension > 6){
     throw std::runtime_error("input has more than 5 dimensions");
   }
 
