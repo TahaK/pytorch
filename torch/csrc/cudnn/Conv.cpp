@@ -22,9 +22,9 @@ void setTensorDescriptor(
     TensorDescriptor& desc, cudnnDataType_t dataType, THVoidTensor* tensor,
     int groups)
 {
-  CHECK_ARG(tensor->nDimension <= 5);
-  int inputSize[5];
-  int inputStride[5];
+  CHECK_ARG(tensor->nDimension <= 6);
+  int inputSize[6];
+  int inputStride[6];
   for (int i = 0; i < tensor->nDimension; ++i) {
     inputSize[i] = (int) tensor->size[i];
     inputStride[i] = (int) tensor->stride[i];
@@ -39,8 +39,8 @@ void setWeightDescriptor(
     FilterDescriptor& desc, cudnnDataType_t dataType, THVoidTensor* weight,
     int groups)
 {
-  CHECK_ARG(weight->nDimension <= 5);
-  int weightSize[5];
+  CHECK_ARG(weight->nDimension <= 6);
+  int weightSize[6];
   THVoidTensor_assertContiguous(weight);
   for (int i = 0; i < weight->nDimension; ++i) {
     weightSize[i] = (int) weight->size[i];
@@ -531,7 +531,7 @@ static void check_args(
 static void check_input_size(THVoidTensor* input, THVoidTensor* weight, int groups)
 {
   if (input->nDimension > 6){
-    throw std::runtime_error("input has more than 5 dimensions");
+    throw std::runtime_error("input has more than 6 dimensions");
   }
 
   if (input->size[1]/groups != weight->size[1]){
@@ -693,11 +693,11 @@ void cudnn_convolution_add_bias(
 {
   CHECK(cudnnSetStream(handle, THCState_getCurrentStream(state)));
   assertSameGPU(dataType, bias, output);
-  CHECK_ARG(output->nDimension <= 5);
+  CHECK_ARG(output->nDimension <= 6);
   TensorDescriptor& bdesc = info->bdesc;
 
-  int size[5] = { 1, (int)bias->size[0], 1, 1, 1 };
-  int stride[5] = { 1, (int)bias->stride[0], 1, 1, 1 };
+  int size[6] = { 1, (int)bias->size[0], 1, 1, 1, 1 };
+  int stride[6] = { 1, (int)bias->stride[0], 1, 1, 1, 1 };
   bdesc.set(dataType, output->nDimension, size, stride);
 
   void* bias_ptr = tensorPointer(dataType, bias, 0, 1, 0);

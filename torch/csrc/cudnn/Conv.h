@@ -14,12 +14,12 @@ namespace torch { namespace cudnn {
 struct ConvolutionParams
 {
   cudnnDataType_t dataType;
-  int input_size[5];
-  int input_stride[5];
-  int weight_size[5];
-  int pad[3];
-  int stride[3];
-  int dilation[3];
+  int input_size[6];
+  int input_stride[6];
+  int weight_size[6];
+  int pad[4];
+  int stride[4];
+  int dilation[4];
   int groups;
 };
 
