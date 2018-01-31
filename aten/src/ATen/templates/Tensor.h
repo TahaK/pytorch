@@ -1,7 +1,5 @@
 #pragma once
 
-#include "ATen/Config.h"
-
 #include "ATen/Generator.h"
 #include "ATen/Scalar.h"
 #include "ATen/ScalarType.h"
@@ -83,6 +81,9 @@ struct Tensor : public detail::TensorBase {
   void * unsafeGetTH(bool retain) const {
     return pImpl->unsafeGetTH(retain);
   }
+
+  // Purposely not defined here to avoid inlining
+  void print() const;
 
   //toLongData(), toFloatData() etc.
   #define TO_TYPE_DATA(T,name,_) \

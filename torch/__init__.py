@@ -129,6 +129,11 @@ def set_default_tensor_type(t):
     global Storage
     Tensor = _import_dotted_name(t)
     Storage = _import_dotted_name(t.replace('Tensor', 'Storage'))
+
+    if 'cuda' in t:
+        import torch.cuda
+        torch.cuda.init()
+
     _C._set_default_tensor_type(Tensor)
 
 
@@ -271,7 +276,6 @@ _integer_tensor_classes = {
     LongTensor, IntTensor, ShortTensor, CharTensor, ByteTensor
 }
 
-set_default_tensor_type('torch.FloatTensor')
 
 ################################################################################
 # Import interface functions defined in Python
@@ -297,6 +301,8 @@ def manager_path():
 # Shared memory manager needs to know the exact location of manager executable
 _C._initExtension(manager_path())
 del manager_path
+
+set_default_tensor_type('torch.FloatTensor')
 
 ################################################################################
 # Remove unnecessary members
@@ -339,6 +345,7 @@ import torch.utils.backcompat
 import torch.onnx
 import torch.random
 import torch.distributions
+import torch.testing
 from torch.autograd import no_grad, enable_grad
 
 _C._init_names(list(torch._tensor_classes) + list(torch._storage_classes))

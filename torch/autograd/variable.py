@@ -45,7 +45,8 @@ class Variable(_C._VariableBase):
         if not self.is_leaf:
             raise RuntimeError("Only Variables created explicitly by the user "
                                "(graph leaves) support the deepcopy protocol at the moment")
-        result = type(self)(self.data.clone())
+        with torch.no_grad():
+            result = self.clone()
         result.requires_grad = self.requires_grad
         memo[id(self)] = result
         return result
@@ -70,7 +71,31 @@ class Variable(_C._VariableBase):
         self.requires_grad, _, self._backward_hooks = state
 
     def __repr__(self):
-        return 'Variable containing:' + self.data.__repr__()
+        if self.is_sparse:
+            data_str = ' \n{} with indices:\n{}and values:\n{}'.format(
+                torch.typename(self.data), self._indices().data,
+                self._values().data)
+        else:
+            data_str = torch._tensor_str._str(self.data, False)
+        strt = 'Variable containing:' + data_str
+        # let's make our own Variable-specific footer
+        size_str = '(' + ','.join(str(size) for size in self.size()) + (',)' if len(self.size()) == 1 else ')')
+        device_str = '' if not self.is_cuda else \
+            ' (GPU {})'.format(self.get_device())
+        strt += '[{} of size {}{}]\n'.format(torch.typename(self.data),
+                                             size_str, device_str)
+
+        # All strings are unicode in Python 3, while we have to encode unicode
+        # strings in Python2. If we can't, let python decide the best
+        # characters to replace unicode characters with.
+        if sys.version_info > (3,):
+            return strt
+        else:
+            if hasattr(sys.stdout, 'encoding'):
+                return strt.encode(
+                    sys.stdout.encoding or 'UTF-8', 'replace')
+            else:
+                return strt.encode('UTF-8', 'replace')
 
     def backward(self, gradient=None, retain_graph=None, create_graph=False):
         """Computes the gradient of current variable w.r.t. graph leaves.
@@ -229,18 +254,8 @@ class Variable(_C._VariableBase):
         """
         self.storage().share_memory_()
 
-    def prod(self, dim=None, keepdim=None):
-        return Prod.apply(self, dim, keepdim)
-
     def view_as(self, tensor):
         return self.view(tensor.size())
-
-    def repeat(self, *repeats):
-        if len(repeats) == 1 and isinstance(repeats[0], torch.Size):
-            repeats = repeats[0]
-        else:
-            repeats = torch.Size(repeats)
-        return Repeat.apply(self, repeats)
 
     def btrifact(self, info=None, pivot=True):
         if info is not None:
@@ -254,13 +269,14 @@ class Variable(_C._VariableBase):
         else:
             return super(Variable, self).btrifact(pivot=pivot)
 
-    def cumprod(self, dim):
-        return Cumprod.apply(self, dim)
-
     def resize(self, *sizes):
+        warnings.warn("non-inplace resize is deprecated")
+        from ._functions import Resize
         return Resize.apply(self, sizes)
 
     def resize_as(self, variable):
+        warnings.warn("non-inplace resize_as is deprecated")
+        from ._functions import Resize
         return Resize.apply(self, variable.size())
 
     def index_add(self, dim, index, tensor):
@@ -309,7 +325,7 @@ class Variable(_C._VariableBase):
         raise NotImplementedError("in-place pow not implemented")
 
     def __rpow__(self, other):
-        return PowConstant.apply(other, self)
+        return self.new([other]) ** self
 
     __neg__ = _C._VariableBase.neg
 
@@ -357,21 +373,8 @@ class Variable(_C._VariableBase):
             array = array.astype('uint8')
         return Variable.from_numpy(array)
 
-    class _torch(object):
-        pass
+    _torch = torch._C._VariableFunctions
 
 
-for method in dir(Variable):
-    # This will also wrap some methods that normally aren't part of the
-    # functional interface, but we don't care, as they won't ever be used
-    if method.startswith('_') or method.endswith('_'):
-        continue
-    if hasattr(Variable._torch, method):
-        continue
-    as_static = staticmethod(getattr(Variable, method))
-    setattr(Variable._torch, method, as_static)
-
-
-from ._functions import *
 from torch._C import _ImperativeEngine as ImperativeEngine
 Variable._execution_engine = ImperativeEngine()

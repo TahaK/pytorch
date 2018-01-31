@@ -17,12 +17,15 @@ import torch
 import torch.cuda
 from torch.autograd import Variable
 from torch._six import string_classes
+import torch.backends.cudnn
 
 
 torch.set_default_tensor_type('torch.DoubleTensor')
+torch.backends.cudnn.disable_global_flags()
+
 
 parser = argparse.ArgumentParser(add_help=False)
-parser.add_argument('--seed', type=int, default=123)
+parser.add_argument('--seed', type=int, default=1234)
 parser.add_argument('--accept', action='store_true')
 args, remaining = parser.parse_known_args()
 SEED = args.seed
@@ -188,10 +191,10 @@ class TestCase(unittest.TestCase):
         return tg
 
     def unwrapVariables(self, x, y):
-        if isinstance(x, Variable) and isinstance(y, Variable):
-            return x.data, y.data
-        elif isinstance(x, Variable) or isinstance(y, Variable):
-            raise AssertionError("cannot compare {} and {}".format(type(x), type(y)))
+        if isinstance(x, Variable):
+            x = x.data
+        if isinstance(y, Variable):
+            y = y.data
         return x, y
 
     def assertEqual(self, x, y, prec=None, message='', allow_inf=False):
@@ -211,7 +214,7 @@ class TestCase(unittest.TestCase):
                     b = b.cuda(device=a.get_device()) if a.is_cuda else b.cpu()
                     # check that NaNs are in the same locations
                     nan_mask = a != a
-                    self.assertTrue(torch.equal(nan_mask, b != b))
+                    self.assertTrue(torch.equal(nan_mask, b != b), message)
                     diff = a - b
                     diff[nan_mask] = 0
                     if diff.is_signed():
@@ -375,6 +378,8 @@ class TestCase(unittest.TestCase):
                 self.assertEqual(s, expected)
 
     if sys.version_info < (3, 2):
+        # assertRegexpMatches renamed assertRegex in 3.2
+        assertRegex = unittest.TestCase.assertRegexpMatches
         # assertRaisesRegexp renamed assertRaisesRegex in 3.2
         assertRaisesRegex = unittest.TestCase.assertRaisesRegexp
 

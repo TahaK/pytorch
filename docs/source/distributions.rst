@@ -25,6 +25,12 @@ Probability distributions - torch.distributions
 .. autoclass:: Beta
     :members:
 
+:hidden:`Binomial`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: Binomial
+    :members:
+
 :hidden:`Categorical`
 ~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -55,16 +61,40 @@ Probability distributions - torch.distributions
 .. autoclass:: Exponential
     :members:
 
+:hidden:`FisherSnedecor`
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: FisherSnedecor
+    :members:
+
 :hidden:`Gamma`
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: Gamma
     :members:
 
+:hidden:`Geometric`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: Geometric
+    :members:
+
+:hidden:`Gumbel`
+~~~~~~~~~~~~~~~~
+
+.. autoclass:: Gumbel
+    :members:
+
 :hidden:`Laplace`
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: Laplace
+    :members:
+
+:hidden:`LogNormal`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: LogNormal
     :members:
 
 :hidden:`Normal`
@@ -79,8 +109,62 @@ Probability distributions - torch.distributions
 .. autoclass:: OneHotCategorical
     :members:
 
+:hidden:`Pareto`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: Pareto
+    :members:
+
+:hidden:`Poisson`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: Poisson
+    :members:
+
+:hidden:`StudentT`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: StudentT
+    :members:
+
+:hidden:`TransformedDistribution`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: TransformedDistribution
+    :members:
+
 :hidden:`Uniform`
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: Uniform
     :members:
+
+`KL Divergence`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: torch.distributions.kl
+.. currentmodule:: torch.distributions.kl
+
+.. autofunction:: kl_divergence
+.. autofunction:: register_kl
+
+`Transforms`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: torch.distributions.transforms
+    :members:
+    :member-order: bysource
+
+`Constraints`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: torch.distributions.constraints
+    :members:
+    :member-order: bysource
+
+`Constraint Registry`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: torch.distributions.constraint_registry
+    :members:
+    :member-order: bysource

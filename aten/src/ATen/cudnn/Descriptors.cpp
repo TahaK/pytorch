@@ -62,12 +62,12 @@ std::string cudnnTypeToString(cudnnDataType_t dtype) {
 }
 
 std::ostream& operator<<(std::ostream & out, const TensorDescriptor& d) {
-  out << "TensorDescriptor " << static_cast<void*>(d.desc) << "\n";
+  out << "TensorDescriptor " << static_cast<void*>(d.desc()) << "\n";
   int nbDims;
   int dimA[CUDNN_DIM_MAX];
   int strideA[CUDNN_DIM_MAX];
   cudnnDataType_t dtype;
-  cudnnGetTensorNdDescriptor(d.desc, CUDNN_DIM_MAX, &dtype, &nbDims, dimA, strideA);
+  cudnnGetTensorNdDescriptor(d.desc(), CUDNN_DIM_MAX, &dtype, &nbDims, dimA, strideA);
   out << "    type = " << cudnnTypeToString(dtype) << "\n";
   out << "    nbDims = " << nbDims << "\n";
   // Read out only nbDims of the arrays!
@@ -94,6 +94,13 @@ void FilterDescriptor::set(const at::Tensor &t, int64_t pad) {
     throw std::runtime_error("cuDNN supports only up to " STR(CUDNN_DIM_MAX) " dimensions");
 #undef _STR
 #undef STR
+  if (!t.is_contiguous()) {
+    // NB: It is possible for this test to be insufficient, because the
+    // Tensor passed in to set the filter descriptor may not be the actual
+    // Tensor whose data pointer is passed to cuDNN.  Nevertheless,
+    // that is the common case, so we can catch most client errors with this test.
+    throw std::runtime_error("cuDNN filters (a.k.a. weights) must be contiguous");
+  }
   int size[CUDNN_DIM_MAX];
   for (int i = 0; i < dim; ++i) {
     size[i] = (int) t.size(i);

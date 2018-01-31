@@ -20,11 +20,14 @@ struct InputBuffer {
     : buffer(size) {}
   InputBuffer(const InputBuffer& other) = delete;
   InputBuffer(InputBuffer&& other) = default;
+  InputBuffer& operator=(InputBuffer&& other) = default;
 
   // Accumulates the variable at a specified index.
   void add(size_t idx, Variable var);
 
   int device() const;
+
+  Variable operator[](std::size_t pos) { return buffer[pos]; }
 
   // Returns the inputs as a list of variables. Destroys given InputBuffer.
   static std::vector<Variable> variables(InputBuffer&& buffer);

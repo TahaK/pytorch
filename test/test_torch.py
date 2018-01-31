@@ -205,8 +205,10 @@ class TestTorch(TestCase):
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found")
     def test_polygamma(self):
         from scipy.special import polygamma
+        from torch.autograd import Variable
         for n in [0, 1]:
             self._testMath(lambda x: torch.polygamma(n, x), lambda x: polygamma(n, x)[()])
+            self._testMath(lambda x: torch.polygamma(n, Variable(x)).data, lambda x: polygamma(n, x)[()])
 
     def test_asin(self):
         self._testMath(torch.asin, lambda x: math.asin(x) if abs(x) <= 1 else float('nan'))
@@ -292,6 +294,8 @@ class TestTorch(TestCase):
         self.assertIsNotNone(torch.Tensor([]).storage())
         self.assertIsNotNone(torch.Tensor().clone().storage())
         self.assertIsNotNone(torch.Tensor([0, 0, 0]).nonzero().storage())
+        from torch.autograd import Variable
+        self.assertIsNotNone(Variable(torch.Tensor()).new().storage())
 
     @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
     def test_has_storage_numpy(self):
@@ -1039,6 +1043,18 @@ class TestTorch(TestCase):
         x = torch.cuda.FloatTensor(100, 100, device=1)
         output = torch.ones_like(x)
         self.assertEqual(output, expected)
+
+    def test_variable_factory(self):
+        expected = torch.autograd.Variable(torch.Tensor([1, 1]))
+        # test data
+        res1 = torch.autograd.variable([1, 1])
+        self.assertEqual(res1, expected)
+
+        # test copy
+        res2 = torch.autograd.variable(expected)
+        self.assertEqual(res2, expected)
+        res2[1] = 2
+        self.assertEqual(expected, torch.ones_like(expected))
 
     def test_diag(self):
         x = torch.rand(100, 100)
@@ -2030,19 +2046,19 @@ class TestTorch(TestCase):
         empty = Variable(torch.Tensor())
         x = Variable(torch.arange(0, 16).view(4, 4))
         self.assertEqual(x.slice(), x)
-        self.assertEqual(x.slice(0, 4), x)
+        self.assertEqual(x.slice(0, 0, 4), x)
         # start and stop are clamped to the size of dim
-        self.assertEqual(x.slice(0, 5), x)
+        self.assertEqual(x.slice(0, 0, 5), x)
         # if start >= stop then the result is empty
-        self.assertEqual(x.slice(2, 1), empty)
-        self.assertEqual(x.slice(2, 2), empty)
+        self.assertEqual(x.slice(0, 2, 1), empty)
+        self.assertEqual(x.slice(0, 2, 2), empty)
         # out of bounds is also empty
-        self.assertEqual(x.slice(10, 12), empty)
+        self.assertEqual(x.slice(0, 10, 12), empty)
         # additional correctness checks
-        self.assertEqual(x.slice(0, 1).data.tolist(), [[0, 1, 2, 3]])
-        self.assertEqual(x.slice(0, -3).data.tolist(), [[0, 1, 2, 3]])
-        self.assertEqual(x.slice(-2, 3, dim=1).data.tolist(), [[2], [6], [10], [14]])
-        self.assertEqual(x.slice(0, -1, 2).data.tolist(), [[0, 1, 2, 3], [8, 9, 10, 11]])
+        self.assertEqual(x.slice(0, 0, 1).data.tolist(), [[0, 1, 2, 3]])
+        self.assertEqual(x.slice(0, 0, -3).data.tolist(), [[0, 1, 2, 3]])
+        self.assertEqual(x.slice(start=-2, end=3, dim=1).data.tolist(), [[2], [6], [10], [14]])
+        self.assertEqual(x.slice(0, 0, -1, 2).data.tolist(), [[0, 1, 2, 3], [8, 9, 10, 11]])
 
     def test_is_signed(self):
         # TODO: remove the Variable wrapper once we merge Variable and Tensor
@@ -2696,7 +2712,7 @@ class TestTorch(TestCase):
             if expected_error is None:
                 result = x.stft(frame_length, hop, fft_size, return_onesided, window, pad_end)
                 ref_result = naive_stft(x, frame_length, hop, fft_size, return_onesided, window, pad_end)
-                self.assertEqual(result.data, ref_result, 1e-8, 'stft result')
+                self.assertEqual(result.data, ref_result, 5e-6, 'stft result')
             else:
                 self.assertRaises(expected_error,
                                   lambda: x.stft(frame_length, hop, fft_size, return_onesided, window, pad_end))
@@ -3006,8 +3022,8 @@ class TestTorch(TestCase):
     def test_pstrf(self):
         def checkPsdCholesky(a, uplo, inplace):
             if inplace:
-                u = torch.Tensor(a.size())
-                piv = torch.IntTensor(a.size(0))
+                u = torch.empty_like(a)
+                piv = a.new(a.size(0)).int()
                 kwargs = {'out': (u, piv)}
             else:
                 kwargs = {}
@@ -3037,6 +3053,8 @@ class TestTorch(TestCase):
             for inplace in (True, False):
                 for uplo in (None, True, False):
                     checkPsdCholesky(a, uplo, inplace)
+                    # TODO: remove once Variable and Tensor are merged
+                    checkPsdCholesky(torch.autograd.Variable(a), uplo, inplace)
 
     def test_numel(self):
         b = torch.ByteTensor(3, 100, 100)
@@ -4269,6 +4287,28 @@ class TestTorch(TestCase):
             self.assertEqual(tensor.narrow(dim, start, target_size[dim]), split, 0)
             start = start + target_size[dim]
 
+        # Variable sections split
+        tensor = torch.randn(20, 10)
+        dim = 0
+        split_sizes = [5, 5, 10]
+        target_sizes = ([[5, 10], [5, 10], [10, 10]])
+        splits = tensor.split(split_sizes, dim)
+        start = 0
+        for target_size, split in zip(target_sizes, splits):
+            self.assertEqual(split.size(), target_size)
+            self.assertEqual(tensor.narrow(dim, start, target_size[dim]), split, 0)
+            start = start + target_size[dim]
+
+        split_sizes = [2, 2, 6]
+        target_sizes = ([20, 2], [20, 2], [20, 6])
+        dim = 1
+        splits = tensor.split(split_sizes, dim)
+        start = 0
+        for target_size, split in zip(target_sizes, splits):
+            self.assertEqual(split.size(), target_size)
+            self.assertEqual(tensor.narrow(dim, start, target_size[dim]), split, 0)
+            start = start + target_size[dim]
+
     def test_chunk(self):
         tensor = torch.rand(4, 7)
         num_chunks = 3
@@ -4401,6 +4441,13 @@ class TestTorch(TestCase):
         w[2].sub_(1)
         for i in range(a.numel()):
             self.assertEqual(w[1][1][i], q[1][1][i] - 1)
+
+    def test_deepcopy_scalar(self):
+        from copy import deepcopy
+        from torch.autograd import variable
+        a = variable(5)
+        self.assertEqual(a.size(), deepcopy(a).size())
+        self.assertEqual(a, deepcopy(a))
 
     def test_copy(self):
         from copy import copy
@@ -4781,6 +4828,14 @@ class TestTorch(TestCase):
         self.assertIsInstance(x.char().sum(), int)
         self.assertIsInstance(x.byte().sum(), int)
 
+    def test_assertEqual(self):
+        x = torch.FloatTensor([0])
+        self.assertEqual(x, 0)
+        xv = torch.autograd.Variable(x)
+        self.assertEqual(xv, 0)
+        self.assertEqual(x, xv)
+        self.assertEqual(xv, x)
+
     def test_new(self):
         x = torch.autograd.Variable(torch.Tensor())
         y = torch.autograd.Variable(torch.randn(4, 4))
@@ -4801,6 +4856,14 @@ class TestTorch(TestCase):
         self.assertRaises(TypeError, lambda: x.new(z))
         # TypeError would be better
         self.assertRaises(RuntimeError, lambda: x.new(z.storage()))
+
+    def test_empty_like(self):
+        x = torch.autograd.Variable(torch.Tensor())
+        y = torch.autograd.Variable(torch.randn(4, 4))
+        z = torch.autograd.Variable(torch.IntTensor([1, 2, 3]))
+        for a in (x, y, z):
+            self.assertEqual(torch.empty_like(a).shape, a.shape)
+            self.assertEqual(torch.empty_like(a).type(), a.type())
 
     @unittest.skipIf(not torch.cuda.is_available(), 'no CUDA')
     def test_pin_memory(self):
@@ -4972,7 +5035,7 @@ class TestTorch(TestCase):
         # check zero dimensional
         x = np.zeros((0, 2))
         self.assertEqual(torch.from_numpy(x).shape, tuple())
-        self.assertEqual(torch.autograd.Variable.from_numpy(x).shape, [0])
+        self.assertEqual(torch._C._VariableFunctions.from_numpy(x).shape, [0])
 
     @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
     def test_ctor_with_numpy_array(self):

@@ -36,10 +36,12 @@ void graph_pass(const std::shared_ptr<tracer::TracingState>& state) {
 
 } // anonymous namespace
 
-extern void runJITCPPTests();
+extern std::string runJITCPPTests();
 
 void initJITBindings(PyObject *module) {
   auto m = py::handle(module).cast<py::module>();
+
+  py::class_<python::IODescriptor>(m, "IODescriptor");
 
   m.def("_jit_init", loadPythonClasses)
    .def("_jit_pass_onnx", ToONNX)
@@ -52,7 +54,11 @@ void initJITBindings(PyObject *module) {
    .def("_jit_pass_lint", graph_pass<LintGraph>)
    .def("_jit_run_cpp_tests", runJITCPPTests)
    .def("_jit_flatten", [](py::handle& obj) {
-     return python::flatten(obj).vars;
+     auto res =  python::flatten(obj);
+     return std::make_pair(res.vars, res.desc);
+   })
+   .def("_jit_unflatten", [](autograd::variable_list vars, python::IODescriptor& desc) {
+     return py::reinterpret_steal<py::object>(python::unflatten(vars, desc));
    });
 
   initPythonIRBindings(module);

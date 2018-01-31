@@ -32,30 +32,58 @@ policy, the code for implementing REINFORCE would be as follows::
 
 from .bernoulli import Bernoulli
 from .beta import Beta
+from .transforms import *
+from .binomial import Binomial
 from .categorical import Categorical
 from .cauchy import Cauchy
+from .chi2 import Chi2
+from .constraint_registry import biject_to, transform_to
 from .dirichlet import Dirichlet
 from .distribution import Distribution
 from .exponential import Exponential
+from .fishersnedecor import FisherSnedecor
 from .gamma import Gamma
-from .chi2 import Chi2
+from .geometric import Geometric
+from .gumbel import Gumbel
+from .kl import kl_divergence, register_kl
 from .laplace import Laplace
+from .log_normal import LogNormal
+from .multinomial import Multinomial
 from .normal import Normal
 from .one_hot_categorical import OneHotCategorical
+from .pareto import Pareto
+from .poisson import Poisson
+from .studentT import StudentT
+from .transformed_distribution import TransformedDistribution
 from .uniform import Uniform
 
 __all__ = [
     'Bernoulli',
     'Beta',
+    'Binomial',
     'Categorical',
     'Cauchy',
     'Chi2',
     'Dirichlet',
     'Distribution',
     'Exponential',
+    'FisherSnedecor',
     'Gamma',
+    'Geometric',
+    'Gumbel',
     'Laplace',
+    'LogNormal',
+    'Multinomial',
     'Normal',
     'OneHotCategorical',
+    'Pareto',
+    'StudentT',
+    'Poisson',
     'Uniform',
+    'TransformedDistribution',
+    'biject_to',
+    'kl_divergence',
+    'register_kl',
+    'transform_to',
 ]
+__all__.extend(transforms.__all__)

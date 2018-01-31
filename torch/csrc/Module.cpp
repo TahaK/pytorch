@@ -10,6 +10,7 @@
 #include <libshm.h>
 #include <TH/TH.h>
 #include <ATen/ATen.h>
+#include <ATen/ExpandUtils.h>
 #include <ATen/dlpack.h>
 #include <ATen/DLConvertor.h>
 #include <pybind11/pybind11.h>
@@ -39,6 +40,7 @@ PyObject* module;
 PyObject* tensor_classes;
 
 PyObject *THPDefaultTensorClass = NULL;
+at::Type *THPDefaultATenType = nullptr;
 THPGenerator *THPDefaultGenerator   = NULL;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -165,6 +167,7 @@ bool THPModule_isTensor(PyObject *obj)
 PyObject * THPModule_setDefaultTensorType(PyObject *_unused, PyObject *type)
 {
   THPDefaultTensorClass = type;
+  THPDefaultATenType = &torch::getATenType((PyTypeObject*)type);
   Py_RETURN_NONE;
 }
 
@@ -198,47 +201,15 @@ static PyObject * findTensor(PyObject *args, PyObject *kwargs) {
   return THPDefaultTensorClass;
 }
 
-static PyObject * swapFirstTwoItems(PyObject *args) {
-  // Returns a tuple with the first two items swapped
-  auto size = PyTuple_GET_SIZE(args);
-  auto r = THPObjectPtr{PyTuple_New(size)};
-  if (!r) return nullptr;
-  for (Py_ssize_t i = 0; i < size; i++) {
-    PyObject* obj = PyTuple_GET_ITEM(args, (i <= 1 ? 1 - i : i));
-    Py_INCREF(obj);
-    PyTuple_SET_ITEM(r.get(), i, obj);
-  }
-  return r.release();
-}
-
 static PyObject * dispatchStateless(PyObject *args, PyObject *kwargs, const char *name) {
   PyObject *tensor = findTensor(args, kwargs);
   return THPUtils_dispatchStateless(tensor, name, args, kwargs);
-}
-
-static PyObject * dispatchStatelessAddXX(PyObject *args, PyObject *kwargs, const char *name) {
-  PyObject *tensor = findTensor(args, kwargs);
-  if (THPVariable_Check(tensor) && PyTuple_GET_SIZE(args) >= 2 && tensor == PyTuple_GET_ITEM(args, 1)) {
-    // On Variables, swap the first two arguments if the 'self' argument comes
-    // second. This handles the deprecated torch.addxx signatures. For example,
-    // torch.addmm(1, var, 2, a, b) -> var.addmm(1, 2, a, b)
-    auto newArgs = THPObjectPtr{swapFirstTwoItems(args)};
-    return THPUtils_dispatchStateless(tensor, name, newArgs.get(), kwargs);
-  } else {
-    return THPUtils_dispatchStateless(tensor, name, args, kwargs);
-  }
 }
 
 #define IMPLEMENT_STATELESS(name)                                              \
 static PyObject * TH_CONCAT_2(THPModule_, name)(PyObject *_unused, PyObject *args, PyObject *kwargs) \
 {                                                                              \
   return dispatchStateless(args, kwargs, #name);                               \
-}
-
-#define IMPLEMENT_STATELESS_ADDXX(name)                                        \
-static PyObject * TH_CONCAT_2(THPModule_, name)(PyObject *_unused, PyObject *args, PyObject *kwargs) \
-{                                                                              \
-  return dispatchStatelessAddXX(args, kwargs, #name);                          \
 }
 
 IMPLEMENT_STATELESS(sigmoid)
@@ -327,8 +298,8 @@ IMPLEMENT_STATELESS(bmm)
 // TODO: this doesn't implement options that return numbers!
 IMPLEMENT_STATELESS(multinomial)
 IMPLEMENT_STATELESS(normal)
-IMPLEMENT_STATELESS(standard_gamma)
-IMPLEMENT_STATELESS(dirichlet_grad)
+IMPLEMENT_STATELESS(_standard_gamma)
+IMPLEMENT_STATELESS(_dirichlet_grad)
 IMPLEMENT_STATELESS(bernoulli)
 IMPLEMENT_STATELESS(range)
 IMPLEMENT_STATELESS(arange)
@@ -361,16 +332,15 @@ IMPLEMENT_STATELESS(le)
 IMPLEMENT_STATELESS(eq)
 IMPLEMENT_STATELESS(ne)
 
-IMPLEMENT_STATELESS_ADDXX(addmm)
-IMPLEMENT_STATELESS_ADDXX(addmv)
-IMPLEMENT_STATELESS_ADDXX(addr)
-IMPLEMENT_STATELESS_ADDXX(addbmm)
-IMPLEMENT_STATELESS_ADDXX(baddbmm)
-IMPLEMENT_STATELESS_ADDXX(addcmul)
-IMPLEMENT_STATELESS_ADDXX(addcdiv)
+IMPLEMENT_STATELESS(addmm)
+IMPLEMENT_STATELESS(addmv)
+IMPLEMENT_STATELESS(addr)
+IMPLEMENT_STATELESS(addbmm)
+IMPLEMENT_STATELESS(baddbmm)
+IMPLEMENT_STATELESS(addcmul)
+IMPLEMENT_STATELESS(addcdiv)
 
 #undef IMPLEMENT_STATELESS
-#undef IMPLEMENT_STATELESS_ADDXX
 
 // In nonzero, the first argument might be a LongTensor that will be used
 // for indices output, so we should pick a function based on second
@@ -491,18 +461,19 @@ PyObject *THPModule_inferSize(PyObject *_unused, PyObject *args)
   PyObject *arg2 = PyTuple_GET_ITEM(args, 1);
   THPUtils_assert(THPSize_Check(arg2), "expected a torch.Size as argument 2");
 
-  THLongStoragePtr size1_guard = THPUtils_unpackSize(arg1);
-  THLongStorage *size1 = size1_guard.get();
-  THLongStoragePtr size2_guard = THPUtils_unpackSize(arg2);
-  THLongStorage *size2 = size2_guard.get();
-  THLongStoragePtr sizes_guard(THLongStorage_new());
-  THLongStorage *sizes = sizes_guard.get();
-
-  char error_buffer[1024];
-  int ret = THLongStorage_inferSize2(sizes, size1->data, size1->size, size2->data, size2->size, error_buffer, 1024);
-  THPUtils_assert(ret == 0, error_buffer);
-  return THPSize_New(sizes->size, sizes->data);
+  auto size1 = THPUtils_unpackLongs(arg1);
+  auto size2 = THPUtils_unpackLongs(arg2);
+  auto sizes = at::infer_size(size1, size2);
+  return THPSize_New(sizes.size(), sizes.data());
   END_HANDLE_TH_ERRORS
+}
+
+PyObject *THPModule_with_scalars(PyObject *_unused, PyObject *args) {
+#ifdef WITH_SCALARS
+  Py_RETURN_TRUE;
+#else
+  Py_RETURN_FALSE;
+#endif
 }
 
 static PyObject *THPModule_setBackcompatBroadcastWarn(PyObject *module, PyObject *arg) {
@@ -632,6 +603,7 @@ static PyMethodDef TorchMethods[] = {
   {"_safe_call",      (PyCFunction)THPModule_safeCall,          METH_VARARGS | METH_KEYWORDS, NULL},
   {"_set_default_tensor_type", (PyCFunction)THPModule_setDefaultTensorType, METH_O, NULL},
   {"_infer_size",     (PyCFunction)THPModule_inferSize,         METH_VARARGS, NULL},
+  {"_with_scalars",(PyCFunction)THPModule_with_scalars, METH_NOARGS,  NULL},
   {"_set_backcompat_broadcast_warn", (PyCFunction)THPModule_setBackcompatBroadcastWarn, METH_O, NULL},
   {"_get_backcompat_broadcast_warn", (PyCFunction)THPModule_getBackcompatBroadcastWarn, METH_NOARGS, NULL},
   {"_set_backcompat_keepdim_warn", (PyCFunction)THPModule_setBackcompatKeepdimWarn, METH_O, NULL},
@@ -747,8 +719,8 @@ static PyMethodDef TorchMethods[] = {
   {"bmm",             (PyCFunction)THPModule_bmm,               METH_VARARGS | METH_KEYWORDS, NULL},
   {"multinomial",     (PyCFunction)THPModule_multinomial,       METH_VARARGS | METH_KEYWORDS, NULL},
   {"normal",          (PyCFunction)THPModule_normal,            METH_VARARGS | METH_KEYWORDS, NULL},
-  {"_standard_gamma",  (PyCFunction)THPModule_standard_gamma,    METH_VARARGS | METH_KEYWORDS, NULL},
-  {"_dirichlet_grad", (PyCFunction)THPModule_dirichlet_grad,    METH_VARARGS | METH_KEYWORDS, NULL},
+  {"_standard_gamma", (PyCFunction)THPModule__standard_gamma,   METH_VARARGS | METH_KEYWORDS, NULL},
+  {"_dirichlet_grad", (PyCFunction)THPModule__dirichlet_grad,   METH_VARARGS | METH_KEYWORDS, NULL},
   {"bernoulli",       (PyCFunction)THPModule_bernoulli,         METH_VARARGS | METH_KEYWORDS, NULL},
   {"rand",            (PyCFunction)THPModule_rand,              METH_VARARGS | METH_KEYWORDS, NULL},
   {"randn",           (PyCFunction)THPModule_randn,             METH_VARARGS | METH_KEYWORDS, NULL},
@@ -807,6 +779,11 @@ bool THCPStream_init(PyObject *module);
 
 #ifdef WITH_CUDA
 PyMethodDef* THCPModule_methods();
+namespace torch { namespace cuda {
+
+void initModule(PyObject *module);
+
+}} // namespace torch::cuda
 #endif
 
 bool THCSPDoubleTensor_init(PyObject *module);
@@ -900,6 +877,9 @@ static PyObject* initModule() {
   torch::autograd::initAutogradClosureBindings(module);
   torch::jit::initJITBindings(module);
   torch::autograd::initNNFunctions(module);
+#ifdef WITH_CUDA
+  torch::cuda::initModule(module);
+#endif
   ASSERT_TRUE(THPDoubleStorage_init(module));
   ASSERT_TRUE(THPFloatStorage_init(module));
   ASSERT_TRUE(THPHalfStorage_init(module));

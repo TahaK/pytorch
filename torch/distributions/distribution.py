@@ -29,6 +29,44 @@ class Distribution(object):
         """
         return self._event_shape
 
+    @property
+    def params(self):
+        """
+        Returns a dictionary from param names to `Constraint` objects that
+        should be satisfied by each parameter of this distribution. For
+        distributions with multiple parameterization, only one complete
+        set of parameters should be specified in `.params`.
+        """
+        raise NotImplementedError
+
+    @property
+    def support(self):
+        """
+        Returns a `Constraint` object representing this distribution's support.
+        """
+        raise NotImplementedError
+
+    @property
+    def mean(self):
+        """
+        Returns the mean of the distribution.
+        """
+        raise NotImplementedError
+
+    @property
+    def variance(self):
+        """
+        Returns the variance of the distribution.
+        """
+        raise NotImplementedError
+
+    @property
+    def stddev(self):
+        """
+        Returns the standard deviation of the distribution.
+        """
+        return self.variance.sqrt()
+
     def sample(self, sample_shape=torch.Size()):
         """
         Generates a sample_shape shaped sample or sample_shape shaped batch of
@@ -99,7 +137,7 @@ class Distribution(object):
             sample_shape (torch.Size): the size of the sample to be drawn.
         """
         shape = torch.Size(sample_shape + self._batch_shape + self._event_shape)
-        if not shape:
+        if not shape and not torch._C._with_scalars():
             shape = torch.Size((1,))
         return shape
 
@@ -130,3 +168,6 @@ class Distribution(object):
             if i != 1 and j != 1 and i != j:
                 raise ValueError('Value is not broadcastable with batch_shape+event_shape: {} vs {}.'.
                                  format(actual_shape, expected_shape))
+
+    def __repr__(self):
+        return self.__class__.__name__ + '()'

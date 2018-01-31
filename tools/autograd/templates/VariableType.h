@@ -48,9 +48,11 @@ private:
   at::Tensor & unpack(const Tensor & t, const char * name, int pos) const;
   at::SparseTensor unpack(SparseTensor t, const char * name, int pos) const;
   at::Tensor & unpack_long(const Tensor & t, const char * name, int pos) const;
+  at::Tensor & unpack_int(const Tensor & t, const char * name, int pos) const;
   at::Tensor & unpack_byte(const Tensor & t, const char * name, int pos) const;
   at::Tensor & unpack_any(const Tensor & t, const char * name, int pos) const;
   at::Tensor unpack_opt(const Tensor & t, const char * name, int pos) const;
+  at::Tensor unpack_any_opt(const Tensor & t, const char * name, int pos) const;
   std::vector<at::Tensor> unpack(at::TensorList tl, const char *name, int pos) const;
   std::vector<at::Tensor> unpack_idxs(at::TensorList tl, const char *name, int pos) const;
 

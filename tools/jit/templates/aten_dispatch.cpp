@@ -5,6 +5,7 @@
 
 #include <unordered_map>
 #include <cstring>
+#include <tuple>
 
 // ${generated_comment}
 
@@ -66,32 +67,65 @@ private:
 
 using list_of_retainable = std::vector<at::Retainable*>;
 
-// pack list takes the return values of aten functions and puts them into a
-// refcounted list. Each pack_list variant takes a Tensor by value, ensuring
-// it has a owning reference and then that reference is stolen ad added to the
-// list_of_retainable output list.
-// pack_list never operates on tensor temporaries.
-void pack_list(list_of_retainable & outputs, Tensor v) { outputs.push_back(toRetainableSteal(std::move(v))); }
-void pack_list(list_of_retainable & outputs, std::vector<Tensor> && ts) {
-  outputs.reserve(ts.size());
-  for(auto & t : ts) {
+// The packer here is carefully written not to make any unnecessary
+// copies.
+
+// pack takes the return values of aten functions and puts them into a
+// refcounted list. Takes an owning reference to a tensor and steals
+// that reference, adding it to the list_of_retainable output list.
+// pack never operates on tensor temporaries.
+void pack(list_of_retainable & outputs, Tensor&& v) {
+  outputs.push_back(toRetainableSteal(std::move(v)));
+}
+void pack(list_of_retainable & outputs, std::vector<Tensor>&& ts) {
+  for(auto& t : ts) {
     outputs.push_back(toRetainableSteal(std::move(t)));
   }
 }
-void pack_list(list_of_retainable & outputs, std::tuple<Tensor, Tensor> v) {
-  outputs.push_back(toRetainableSteal(std::move(std::get<0>(v))));
-  outputs.push_back(toRetainableSteal(std::move(std::get<1>(v))));
+
+template<std::size_t remaining, typename... Args>
+struct TuplePacker
+{
+  // NB: *Not* a universal reference.
+  static void execute(list_of_retainable & outputs, std::tuple<Args...> && t)
+  {
+    // NB: The move here does not "destroy" the entire tuple, that is
+    // not what std::move does; only the particular tuple index
+    // processed here gets stolen.
+    pack(outputs, std::get<sizeof...(Args) - remaining>(std::move(t)));
+    TuplePacker<remaining - 1, Args...>::execute(outputs, std::move(t));
+  }
+};
+
+template<typename... Args>
+struct TuplePacker<0, Args...>
+{
+  static void execute(list_of_retainable & outputs, std::tuple<Args...> && t) {};
+};
+
+template<typename... Args>
+void pack_list(list_of_retainable & outputs, std::tuple<Args...> && t)
+{
+  TuplePacker<sizeof...(Args), Args...>::execute(outputs, std::move(t));
 }
-void pack_list(list_of_retainable & outputs, std::tuple<Tensor, Tensor, Tensor> v) {
-  outputs.push_back(toRetainableSteal(std::move(std::get<0>(v))));
-  outputs.push_back(toRetainableSteal(std::move(std::get<1>(v))));
-  outputs.push_back(toRetainableSteal(std::move(std::get<2>(v))));
+
+template<typename... Args>
+void pack_list(list_of_retainable & outputs, Tensor && t)
+{
+  pack(outputs, std::move(t));
 }
-void pack_list(list_of_retainable & outputs, std::tuple<Tensor, Tensor, Tensor, Tensor> v) {
-  outputs.push_back(toRetainableSteal(std::move(std::get<0>(v))));
-  outputs.push_back(toRetainableSteal(std::move(std::get<1>(v))));
-  outputs.push_back(toRetainableSteal(std::move(std::get<2>(v))));
-  outputs.push_back(toRetainableSteal(std::move(std::get<3>(v))));
+
+template<typename... Args>
+void pack_list(list_of_retainable & outputs, std::vector<Tensor> && t)
+{
+  pack(outputs, std::move(t));
+}
+
+int deviceForInputs(const list_of_retainable & inputs) {
+  if(inputs.size() == 0)
+    return -1;
+  auto t = TensorTemporary(inputs[0]);
+  return t.value().type().is_cuda() ? (int) t.value().get_device() : -1;
 }
 
 // A list of functions taking TensorList arguments (where we can't use
@@ -114,12 +148,12 @@ std::unordered_map<std::string, operator_constructor> constructors = {
 
 std::string getDescriptor(jit::Node* n) {
   std::stringstream s;
-  s << symbolToString(n->kind());
+  s << n->kind().toString();
   if (tensor_vararg_fns.count(n->kind()) == 0)
     s << "-" << n->inputs().size();
   else
     s << "-*";
-  std::vector<const char*> attr_names = fmap(n->attributeNames(), &symbolToString);
+  std::vector<const char*> attr_names = fmap(n->attributeNames(), [](Symbol x) { return x.toString(); });
   std::sort(attr_names.begin(), attr_names.end(), [](const char *a, const char *b) {
     return std::strcmp(a, b) < 0;
   });

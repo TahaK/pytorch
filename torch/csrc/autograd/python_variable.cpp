@@ -50,9 +50,11 @@ PyObject * THPVariable_Wrap(Variable var)
     Py_RETURN_NONE;
   }
 
+#ifndef WITH_SCALARS
   if (var.dim() == 0) {
     throw std::runtime_error("Variable API does not support Scalars");
   }
+#endif
 
   if (auto obj = var.get()->pyobj) {
     Py_INCREF(obj);
@@ -511,6 +513,7 @@ PyTypeObject THPVariableType = {
 namespace torch { namespace autograd {
 
 extern PyMethodDef variable_methods[];
+extern void initTorchFunctions(PyObject *module);
 
 }}
 
@@ -523,5 +526,6 @@ bool THPVariable_initModule(PyObject *module)
     return false;
   Py_INCREF(&THPVariableType);
   PyModule_AddObject(module, "_VariableBase", (PyObject *)&THPVariableType);
+  torch::autograd::initTorchFunctions(module);
   return true;
 }

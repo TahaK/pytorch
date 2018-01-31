@@ -510,7 +510,7 @@ class RNNCellBase(Module):
         if hx.size(1) != self.hidden_size:
             raise RuntimeError(
                 "hidden{} has inconsistent hidden_size: got {}, expected {}".format(
-                    hidden_label, input.size(1), self.input_size))
+                    hidden_label, hx.size(1), self.hidden_size))
 
 
 class RNNCell(RNNCellBase):
@@ -622,7 +622,7 @@ class LSTMCell(RNNCellBase):
         - **input** (batch, input_size): tensor containing input features
         - **h_0** (batch, hidden_size): tensor containing the initial hidden
           state for each element in the batch.
-        - **c_0** (batch. hidden_size): tensor containing the initial cell state
+        - **c_0** (batch, hidden_size): tensor containing the initial cell state
           for each element in the batch.
 
     Outputs: h_1, c_1

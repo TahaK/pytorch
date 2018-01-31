@@ -150,7 +150,7 @@ void printAttributes(std::ostream & out, const Node * n) {
   for(auto name : names) {
     if(i++ > 0)
       out << ", ";
-    out << symbolToString(name) <<"=";
+    out << name.toString() <<"=";
     switch(n->kindOf(name)) {
       case AttributeKind::f:
         out << n->f(name);
@@ -224,19 +224,21 @@ std::ostream& printNode(std::ostream & out, const Node * n, std::vector<const No
       printPyObject(out, scalar);
     }
     out << ")";
-  IR_ELSEIF(FusionGroup)
-    if(groups) {
-      out << "fusion_group_" << groups->size();
-      groups->push_back(value);
-    } else {
-      out << "fusion_group[" << *n->g(kSubgraph) << "]";
-    }
   IR_ELSEIFM_CONST(CppOp)
     out << "CppOp[" << value->name() << "]";
   IR_ELSE()
-    out << symbolToString(n->kind());
-    if(n->hasAttributes()) {
-      printAttributes(out,n);
+    if(n->hasAttribute(kSubgraph)) {
+      if(groups) {
+        out << n->kind().toString() << "_" << groups->size();
+        groups->push_back(n);
+      } else {
+        out << n->kind().toString() << "[" << *n->g(kSubgraph) << "]";
+      }
+    } else {
+      out << n->kind().toString();
+      if(n->hasAttributes()) {
+        printAttributes(out,n);
+      }
     }
   IR_END()
   out << "(" << n->inputs() << ")";
@@ -270,7 +272,7 @@ std::ostream& operator<<(std::ostream & out, const Graph & g) {
   out << "  return (" << g.outputs() << ");\n}\n";
   size_t i = 0;
   for(auto fg : groups) {
-    out << "with fusion_group_" <<i++ << " = " << *fg->g(kSubgraph);
+    out << "with " << fg->kind().toString() << "_" <<i++ << " = " << *fg->g(kSubgraph);
   }
   /*
   // Uncomment this to debug all_nodes issues
@@ -283,6 +285,29 @@ std::ostream& operator<<(std::ostream & out, const Graph & g) {
   }
   */
   return out;
+}
+
+static void checkSameDevice(const Node* node) {
+  bool has_device = false;
+  int device;
+  auto checkValue = [&](const Value* v) {
+    if(v->hasType()) {
+      if(TensorType* type = v->type()->cast<TensorType>()) {
+        if(!has_device) {
+          has_device = true;
+          device = type->device();
+        } else {
+          JIT_ASSERT(device == type->device());
+        }
+      }
+    }
+  };
+  for(auto input : node->inputs()) {
+    checkValue(input);
+  }
+  for(auto output : node->outputs()) {
+    checkValue(output);
+  }
 }
 
 using node_set = std::set<const Node*>;
@@ -365,6 +390,7 @@ void Node::lint() const {
     // TODO: add invariants
   // TODO: It's not good for these ops to be top-level, it makes cases longer.
   IR_ELSEIF(FusionGroup)
+    checkSameDevice(value);
     // TODO: Typecheck the parameters
     value->g(kSubgraph)->lint();
   IR_END()

@@ -17,6 +17,7 @@ import functools
 import types
 from torch._six import string_classes
 from torch.autograd import Function, function
+from torch.jit import _unique_state_dict
 
 
 @contextlib.contextmanager
@@ -100,13 +101,13 @@ def _optimize_trace(trace, aten):
     torch._C._jit_pass_lint(trace)
 
 
-def _trace(func, args, return_outs=False):
+def _trace(func, args, return_outs=False, aten=False):
     # Special case for common case of passing a single Variable
     if isinstance(args, torch.autograd.Variable):
         args = (args, )
 
     trace, torch_out = torch.jit.trace(func, args)
-    _optimize_trace(trace)
+    _optimize_trace(trace, aten)
     if return_outs:
         return trace, torch_out
     return trace
@@ -120,7 +121,7 @@ def _export(model, args, f, export_params=True, verbose=False, training=False,
 
     # A basic sanity check: make sure the state_dict keys are the same
     # before and after running the model.  Fail fast!
-    orig_state_dict_keys = model.state_dict().keys()
+    orig_state_dict_keys = _unique_state_dict(model).keys()
 
     # By default, training=False, which is good because running a model in
     # training mode could result in internal buffers getting updated, dropout
@@ -130,7 +131,7 @@ def _export(model, args, f, export_params=True, verbose=False, training=False,
     with set_training(model, training):
         trace, torch_out = torch.jit.trace(model, args)
 
-    if orig_state_dict_keys != model.state_dict().keys():
+    if orig_state_dict_keys != _unique_state_dict(model).keys():
         raise RuntimeError("state_dict changed after running the tracer; "
                            "something weird is happening in your model!")
 
@@ -146,7 +147,7 @@ def _export(model, args, f, export_params=True, verbose=False, training=False,
     if export_params:
         # NB: OrderedDict values is not actually a list, but trace.export is
         # not duck-typed and expects an actual list.
-        proto = trace.export(list(model.state_dict().values()), _onnx_opset_version)
+        proto = trace.export(list(_unique_state_dict(model).values()), _onnx_opset_version)
     else:
         proto = trace.export([], _onnx_opset_version)
 
@@ -373,6 +374,49 @@ def _node_getitem(self, k):
     return getattr(self, sel)(k)
 
 
+def _symbolic_override_wrapper_maker(symbolic_fn, first_arg_only, fn):
+
+    def wrapper(*args, **kwargs):
+        output = fn(*args, **kwargs)
+        # fast pass
+        if first_arg_only and not torch._C._jit_is_tracing(args[0]):
+            return output
+
+        flat_args = tuple(function._iter_variables(args))
+        if not any(map(torch._C._jit_is_tracing, flat_args)):
+            return output
+        flat_output_tensors = tuple(
+            v.data for v in function._iter_variables(output))
+        assert len(list(function._iter_variables_permissive(
+            list(kwargs.values())))) == 0, \
+            "Passing Variable through kwargs is not supported"
+
+        class ExportProxy(Function):
+            @staticmethod
+            def symbolic(g, *flat_args):
+                symbolic_args = function._unflatten(flat_args, args)
+                symbolic_output = symbolic_fn(g, *symbolic_args, **kwargs)
+                return tuple(function._iter_jit_values(symbolic_output))
+
+            @staticmethod
+            def forward(ctx, *unused_args):
+                return flat_output_tensors
+
+            @staticmethod
+            def backward(ctx, *unused_args, **unused_kwargs):
+                raise RuntimeError(
+                    "symbolic_override is meant for inference export only")
+
+        flat_proxy_output = ExportProxy.apply(*flat_args)
+        return function._unflatten(flat_proxy_output, output)
+
+    # fn might be autograd.Function too, in this case wrapping doesn't work
+    if isinstance(fn, types.FunctionType):
+        wrapper = functools.wraps(fn)(wrapper)
+
+    return wrapper
+
+
 def symbolic_override(symbolic_fn):
     """
     Decorator to override ONNX export of the a function with specified subgraph.
@@ -399,45 +443,19 @@ def symbolic_override(symbolic_fn):
     ```
     """
 
-    def wrapper_maker(fn):
+    return functools.partial(_symbolic_override_wrapper_maker, symbolic_fn, False)
 
-        def wrapper(*args, **kwargs):
-            output = fn(*args, **kwargs)
-            flat_args = tuple(function._iter_variables(args))
-            if not any(map(torch._C._jit_is_tracing, flat_args)):
-                return output
-            flat_output_tensors = tuple(
-                v.data for v in function._iter_variables(output))
-            assert len(list(function._iter_variables_permissive(
-                list(kwargs.values())))) == 0, \
-                "Passing Variable through kwargs is not supported"
 
-            class ExportProxy(Function):
-                @staticmethod
-                def symbolic(g, *flat_args):
-                    symbolic_args = function._unflatten(flat_args, args)
-                    symbolic_output = symbolic_fn(g, *symbolic_args, **kwargs)
-                    return tuple(function._iter_jit_values(symbolic_output))
+def symbolic_override_first_arg_based(symbolic_fn):
+    """
+    Decorator to override ONNX export of the a function with specified subgraph.
 
-                @staticmethod
-                def forward(ctx, *unused_args):
-                    return flat_output_tensors
+    Equivalent to `symbolic_override` but checks only the first argument of the
+    function to figure out whether the tracing is on. Thus the first arg needs
+    to be a Variable.
+    """
 
-                @staticmethod
-                def backward(ctx, *unused_args, **unused_kwargs):
-                    raise RuntimeError(
-                        "symbolic_override is meant for inference export only")
-
-            flat_proxy_output = ExportProxy.apply(*flat_args)
-            return function._unflatten(flat_proxy_output, output)
-
-        # fn might be autograd.Function too, in this case wrapping doesn't work
-        if isinstance(fn, types.FunctionType):
-            wrapper = functools.wraps(fn)(wrapper)
-
-        return wrapper
-
-    return wrapper_maker
+    return functools.partial(_symbolic_override_wrapper_maker, symbolic_fn, True)
 
 
 torch._C.Graph.op = _graph_op

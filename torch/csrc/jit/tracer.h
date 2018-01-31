@@ -4,6 +4,7 @@
 #include "torch/csrc/jit/tracer_state.h"
 #include "torch/csrc/assertions.h"
 #include "torch/csrc/utils/functional.h"
+#include "torch/csrc/utils/variadic.h"
 #include "torch/csrc/autograd/function_hook.h"
 #include "torch/csrc/autograd/variable.h"
 
@@ -60,10 +61,14 @@ inline std::vector<VariableFlags> getVarFlags(const variable_list& vars) {
 
 
 // Should a function which takes 'vars' as inputs be traced?
-// It sufficies for ONE variable to be tracing: any "untraced" variables
+// It suffices for ONE variable to be tracing: any "untraced" variables
 // are treated as constants.
 //
-// TODO: This code lives in the hotpath; make sure it is fast
+// NB: This code lives in the hotpath; make sure it is fast
+//
+// NB: Variable overload is not variadic because we don't actually
+// need it (in most cases if we have a variable_list it is already
+// flattened).
 inline bool isTracingVar(const Variable& var) {
   if (!var.defined() || !var.tracing_state()) return false;
   return std::any_of(var.tracing_state()->begin(), var.tracing_state()->end(), detail::isElemActive);
@@ -77,28 +82,19 @@ inline bool isTracingVar(at::ArrayRef<Variable> vars) {
   return false;
 }
 
-// NB: Don't forget to forward declare your template calls: they are going to
-// recursively call one another!
-template<typename... Args> inline bool isTracing();
-template<typename... Args> inline bool isTracing(const at::Tensor& x, Args... args);
-template<typename... Args> inline bool isTracing(at::ArrayRef<at::Tensor> xs, Args... args);
-
-template<typename... Args>
-inline bool isTracing() {
-  return false;
-}
-
-template<typename... Args>
-inline bool isTracing(const at::Tensor& x, Args... args) {
-  return isTracingVar(x) || isTracing(args...);
-}
-
-template<typename... Args>
-inline bool isTracing(at::ArrayRef<at::Tensor> xs, Args... args) {
-  for (const auto & x : xs) {
-    if (isTracingVar(x)) return true;
+struct IsTracing : IterArgs<IsTracing> {
+  bool out = false;
+  using IterArgs<IsTracing>::operator();
+  void operator()(const at::Tensor& var) {
+    out = out || isTracingVar(var);
   }
-  return isTracing(args...);
+  bool short_circuit() { return out; }
+};
+
+// To be called with Tensor arguments from generated code
+template<typename... Args>
+inline bool isTracing(Args&&... args) {
+  return IsTracing().apply(std::forward<Args>(args)...).out;
 }
 
 // Retrieve the tracing state which a function applied with 'vars' should
@@ -209,13 +205,18 @@ struct TraceInput {
 // NB: Why does this take an rvalue reference?  We need to get a non-const
 // reference to at::Tensor buffer to call unsafeGetTH, but you can't get this
 // out of a const vector (silly std::vector...)
-inline std::shared_ptr<TracingState> enter(std::vector<TraceInput>&& trace_inputs, std::size_t num_stages) {
+inline std::pair<std::shared_ptr<TracingState>, variable_list> enter(std::vector<TraceInput>&& trace_inputs, std::size_t num_stages) {
   auto state = std::make_shared<TracingState>(num_stages);
   variable_list inputs;
   for (auto& trace_input : trace_inputs) {
     if (trace_input.variable.defined()) {
       JIT_ASSERT(!trace_input.buffer.defined());
-      auto& input = trace_input.variable;
+      auto input = trace_input.variable;
+      auto * value_state = detail::getValueState(state, input, false);
+      if (value_state) {
+        // See Note [Repeated inputs] in tracer.cpp
+        input = input.view(input.sizes());
+      }
       auto input_node = state->graph->addInput(input.name());
       setValueTrace(state, input, input_node);
       input_node->inferTypeFrom(input.data());
@@ -233,7 +234,7 @@ inline std::shared_ptr<TracingState> enter(std::vector<TraceInput>&& trace_input
   state->var_flags[0].first = detail::getVarFlags(inputs);
   state->active = true;
   state->inputs = inputs;
-  return state;
+  return std::make_pair(state, inputs);
 }
 
 namespace detail {
@@ -270,6 +271,14 @@ inline void exit(const variable_list& outputs) {
 // with an Eval in the trace).
 void nontraceableBackwardSubgraph(const variable_list& inputs, const variable_list& outputs);
 
-Node* recordTrace(std::string op, at::ArrayRef<Variable> inputs, at::ArrayRef<Variable> outputs);
+// Pre-recorded information about the trace before we actually carry
+// out the trace
+struct PreTraceInfo {
+  std::shared_ptr<TracingState> state;
+  Node *n;
+};
+
+PreTraceInfo preRecordTrace(std::string op, at::ArrayRef<Variable> inputs);
+void postRecordTrace(const PreTraceInfo& info, at::ArrayRef<Variable> outputs);
 
 }}} // namespace torch::jit::tracer
